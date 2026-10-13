@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Book Summarizer</title>
+    <meta name="description" content="Upload a PDF book and get a clear, readable summary you can download or email." />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css" />
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <div class="page">
+      <header class="site-header">
+        <h1>Book Summarizer</h1>
+        <p class="tagline">Upload a PDF book and get a clear summary in a few paragraphs.</p>
+      </header>
+
+      <main>
+        <section class="card" id="upload-card" aria-label="Upload a book">
+          <form id="upload-form" novalidate>
+            <label class="dropzone" id="dropzone" for="file-input">
+              <svg class="dz-icon" viewBox="0 0 24 24" width="40" height="40" aria-hidden="true" focusable="false">
+                <path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"
+                  d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M12 17v-6m0 0-2.5 2.5M12 11l2.5 2.5" />
+              </svg>
+              <span class="dz-title">Drop a PDF here or <span class="dz-link">browse files</span></span>
+              <span class="dz-hint" id="dz-hint">PDF only, up to 10 MB</span>
+            </label>
+            <input class="visually-hidden" type="file" id="file-input" accept="application/pdf,.pdf" aria-describedby="dz-hint form-error" />
+
+            <div class="file-chip" id="file-chip" hidden>
+              <span class="file-name" id="file-name"></span>
+              <span class="file-size" id="file-size"></span>
+              <button type="button" class="chip-remove" id="file-remove" aria-label="Remove selected file">&times;</button>
+            </div>
+
+            <p class="error" id="form-error" role="alert" hidden></p>
+
+            <button class="btn primary" id="submit" type="submit" disabled>Summarize book</button>
+          </form>
+
+          <div class="progress" id="progress" hidden>
+            <p id="progress-text" role="status" aria-live="polite"></p>
+            <progress id="progress-bar" max="100" aria-labelledby="progress-text"></progress>
+            <button type="button" class="btn" id="cancel">Cancel</button>
+          </div>
+        </section>
+
+        <article class="card result" id="result" hidden aria-labelledby="result-title">
+          <p class="eyebrow">Summary</p>
+          <h2 id="result-title" tabindex="-1"></h2>
+          <ul class="meta" id="result-meta" aria-label="About this summary"></ul>
+          <p class="notice" id="result-notice" hidden></p>
+          <div class="summary" id="summary"></div>
+
+          <div class="actions" role="group" aria-label="Save or share this summary">
+            <button type="button" class="btn primary" id="download-txt">Download .txt</button>
+            <button type="button" class="btn" id="download-md">Download .md</button>
+            <a class="btn" id="email" href="mailto:">Email</a>
+            <button type="button" class="btn" id="copy">Copy</button>
+          </div>
+          <p class="status" id="action-status" role="status" aria-live="polite"></p>
+
+          <button type="button" class="btn link-btn" id="again">Summarize another book</button>
+        </article>
+      </main>
+
+      <footer class="site-footer">
+        <p id="privacy"></p>
+      </footer>
+    </div>
+  </body>
+</html>

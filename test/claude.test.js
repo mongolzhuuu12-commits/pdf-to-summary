@@ -141,6 +141,41 @@ describe('long books', () => {
     for (let i = 1; i <= 6; i++) assert.match(sent, new RegExp(`Section ${i} content`));
   });
 
+  it('stops sending sections, and cancels in-flight ones, as soon as one fails', async () => {
+    const tenSections = Array.from({ length: 10 }, (_, i) => `Part ${i}`.padEnd(200, '.')).join('\n\n');
+    const inFlight = [];
+    const client = fakeClient((params, n) => {
+      if (n === 1) throw new Error('boom');
+      // Every other section call hangs until it is cancelled.
+      return new Promise((_, reject) => {
+        const { signal } = client.calls[n - 1].options;
+        inFlight.push(signal);
+        signal.addEventListener('abort', () => reject(new Anthropic.APIUserAbortError()));
+      });
+    });
+    await assert.rejects(
+      createClaudeSummarizer({ client, singlePassMaxChars: 300, sectionChars: 250 }).summarize({ title: 't', text: tenSections }),
+      (err) => err instanceof UserFacingError && err.status === 502,
+    );
+    assert.ok(client.calls.length <= 4, `only the first batch should start, got ${client.calls.length} calls`);
+    assert.ok(inFlight.length > 0 && inFlight.every((s) => s.aborted), 'in-flight section calls are cancelled');
+  });
+
+  it('still cancels section calls when the user cancels', async () => {
+    const outer = new AbortController();
+    const client = fakeClient((params, n) =>
+      new Promise((_, reject) => {
+        const { signal } = client.calls[n - 1].options;
+        if (n === 2) setTimeout(() => outer.abort(), 5);
+        signal.addEventListener('abort', () => reject(new Anthropic.APIUserAbortError()));
+      }),
+    );
+    await assert.rejects(
+      createClaudeSummarizer({ client, singlePassMaxChars: 300, sectionChars: 250 }).summarize({ title: 't', text: book, signal: outer.signal }),
+    );
+    assert.ok(client.calls.every((c) => c.options.signal.aborted));
+  });
+
   it('fails the whole request if any section fails', async () => {
     const client = fakeClient((params, n) => {
       if (n === 2) throw new Error('boom');

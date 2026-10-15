@@ -126,16 +126,32 @@ export function createClaudeSummarizer({
 
   /** Read a very long book in sections and return notes on each, in order. */
   async function takeNotes(sections, signal) {
+    // One failed section fails the whole summary, so stop paying for the rest at once:
+    // cancel calls in flight and start no new ones. The user cancelling does the same.
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
+
     const notes = new Array(sections.length);
     let next = 0;
     const worker = async () => {
-      while (next < sections.length) {
+      while (next < sections.length && !controller.signal.aborted) {
         const i = next++;
         const user = `This is section ${i + 1} of ${sections.length}.\n\n${wrap('section', sections[i])}`;
-        notes[i] = await complete({ system: NOTES_SYSTEM, user, signal });
+        try {
+          notes[i] = await complete({ system: NOTES_SYSTEM, user, signal: controller.signal });
+        } catch (err) {
+          abort();
+          throw err;
+        }
       }
     };
-    await Promise.all(Array.from({ length: Math.min(SECTION_CONCURRENCY, sections.length) }, worker));
+    try {
+      await Promise.all(Array.from({ length: Math.min(SECTION_CONCURRENCY, sections.length) }, worker));
+    } finally {
+      signal?.removeEventListener('abort', abort);
+    }
     return notes;
   }
 

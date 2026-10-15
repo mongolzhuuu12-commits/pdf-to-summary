@@ -148,12 +148,13 @@ function summarize(file) {
     xhr.responseType = 'text';
 
     xhr.upload.addEventListener('progress', (event) => {
-      if (!event.lengthComputable) return;
-      if (event.loaded < event.total) {
-        setProgress(`Uploading… ${Math.round((event.loaded / event.total) * 100)}%`, (event.loaded / event.total) * 100);
-      } else {
-        setProgress('Reading and summarizing your book. Long books can take a minute or two.', null);
-      }
+      if (!event.lengthComputable || event.loaded >= event.total) return;
+      const percent = (event.loaded / event.total) * 100;
+      setProgress(`Uploading… ${Math.round(percent)}%`, percent);
+    });
+    // Fires once the whole file is sent, even when the browser can't report sizes.
+    xhr.upload.addEventListener('load', () => {
+      setProgress('Reading and summarizing your book. Long books can take a minute or two.', null);
     });
 
     xhr.addEventListener('load', () => {

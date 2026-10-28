@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { chunkText, cleanPages, countWords, toParagraphs } from '../src/text.js';
+import { chunkText, cleanPages, countWords, toParagraphs } from '../shared/text.js';
 
 describe('cleanPages', () => {
   it('removes running headers and page numbers that repeat across pages', () => {

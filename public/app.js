@@ -6,6 +6,7 @@ import {
   toPlainText,
   validateFile,
 } from './format.js';
+import { summarizeExtractive } from './shared/extractive.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -38,27 +39,30 @@ const els = {
 const state = {
   maxBytes: 10 * 1024 * 1024,
   file: null,
-  request: null, // in-flight XMLHttpRequest
+  mode: 'browser',
+  controller: null, // AbortController for the summary in progress
   result: null,
 };
 
 /* ---------- configuration ---------- */
 
+// "browser": everything happens on this device (static hosting, or a server without a key).
+// "ai": the server can write AI summaries; it receives the extracted text, never the PDF.
 async function loadConfig() {
   try {
     const res = await fetch('/api/config');
     if (!res.ok) throw new Error(String(res.status));
     const config = await res.json();
-    state.maxBytes = config.maxFileBytes;
-    els.hint.textContent = `PDF only, up to ${formatBytes(config.maxFileBytes)}`;
-    els.privacy.textContent =
-      config.mode === 'ai'
-        ? 'Your PDF is processed in memory and is not stored. Its text is sent to Anthropic’s Claude API to write the summary.'
-        : 'Your PDF is processed in memory on the server and is not stored.';
+    state.maxBytes = config.maxFileBytes ?? state.maxBytes;
+    state.mode = config.mode === 'ai' ? 'ai' : 'browser';
   } catch {
-    // Defaults are fine; the server enforces the real limits anyway.
-    els.privacy.textContent = 'Your PDF is processed in memory and is not stored.';
+    state.mode = 'browser'; // no API, e.g. a static host
   }
+  els.hint.textContent = `PDF only, up to ${formatBytes(state.maxBytes)}`;
+  els.privacy.textContent =
+    state.mode === 'ai'
+      ? 'Your PDF is read in your browser. Only its text is sent to this site and to Anthropic’s Claude API to write the summary, and nothing is stored.'
+      : 'Your PDF is read entirely in your browser. It is never uploaded anywhere.';
 }
 
 /* ---------- file selection ---------- */
@@ -139,69 +143,72 @@ function setProgress(text, percent) {
   else els.progressBar.value = percent;
 }
 
-/** Upload the file and resolve with the parsed JSON response. */
-function summarize(file) {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    state.request = xhr;
-    xhr.open('POST', '/api/summarize');
-    xhr.responseType = 'text';
+/** Let the browser paint the latest progress message before heavy work starts. */
+const nextPaint = () => new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
 
-    xhr.upload.addEventListener('progress', (event) => {
-      if (!event.lengthComputable || event.loaded >= event.total) return;
-      const percent = (event.loaded / event.total) * 100;
-      setProgress(`Uploading… ${Math.round(percent)}%`, percent);
-    });
-    // Fires once the whole file is sent, even when the browser can't report sizes.
-    xhr.upload.addEventListener('load', () => {
-      setProgress('Reading and summarizing your book. Long books can take a minute or two.', null);
-    });
+const isCancelled = (err) => err?.name === 'CancelledError' || err?.name === 'AbortError';
 
-    xhr.addEventListener('load', () => {
-      let body = null;
-      try {
-        body = JSON.parse(xhr.responseText);
-      } catch {
-        // Not JSON, e.g. an error page from a proxy.
-      }
-      if (xhr.status >= 200 && xhr.status < 300 && body) return resolve(body);
-      const fallback =
-        xhr.status === 413
-          ? `That file is larger than the ${formatBytes(state.maxBytes)} limit.`
-          : 'Something went wrong while summarizing. Please try again.';
-      reject(new Error(body?.error || fallback));
+async function summarizeWithServer(book, signal) {
+  let res;
+  try {
+    res = await fetch('/api/summarize-text', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: book.title, text: book.text }),
+      signal,
     });
-    xhr.addEventListener('error', () =>
-      reject(new Error('We could not reach the server. Check your connection and try again.')),
-    );
-    xhr.addEventListener('abort', () => reject(Object.assign(new Error('Cancelled'), { cancelled: true })));
+  } catch (err) {
+    if (isCancelled(err)) throw err;
+    throw new Error('We could not reach the server. Check your connection and try again.');
+  }
+  const body = await res.json().catch(() => null); // a proxy error page is not JSON
+  if (!res.ok || !body) {
+    throw new Error(body?.error || 'Something went wrong while summarizing. Please try again.');
+  }
+  return body.paragraphs;
+}
 
-    const data = new FormData();
-    data.append('file', file);
-    setProgress('Uploading… 0%', 0);
-    xhr.send(data);
+async function summarize(file, signal) {
+  setProgress('Opening your PDF…', null);
+  const { readPdfFile } = await import('./pdf-reader.js'); // pdf.js loads only when needed
+  const book = await readPdfFile(file, {
+    signal,
+    onProgress: (page, total) => setProgress(`Reading page ${page} of ${total}…`, (page / total) * 100),
   });
+
+  setProgress(
+    state.mode === 'ai' ? 'Summarizing your book. Long books can take a minute or two.' : 'Summarizing your book…',
+    null,
+  );
+  await nextPaint();
+  if (signal.aborted) throw Object.assign(new Error('Cancelled'), { name: 'AbortError' });
+
+  const paragraphs =
+    state.mode === 'ai' ? await summarizeWithServer(book, signal) : summarizeExtractive(book.text);
+  return { title: book.title, pages: book.pages, words: book.words, mode: state.mode === 'ai' ? 'ai' : 'extractive', paragraphs };
 }
 
 els.form.addEventListener('submit', async (event) => {
   event.preventDefault();
-  if (!state.file || state.request) return;
+  if (!state.file || state.controller) return;
 
   showError(null);
   setBusy(true);
+  state.controller = new AbortController();
   try {
-    const result = await summarize(state.file);
-    showResult(result);
+    showResult(await summarize(state.file, state.controller.signal));
   } catch (err) {
     setBusy(false);
-    if (!err.cancelled) showError(err.message);
+    if (!isCancelled(err)) {
+      showError(err?.message || 'Something went wrong. Please try again.');
+    }
     els.submit.focus();
   } finally {
-    state.request = null;
+    state.controller = null;
   }
 });
 
-els.cancel.addEventListener('click', () => state.request?.abort());
+els.cancel.addEventListener('click', () => state.controller?.abort());
 
 /* ---------- result ---------- */
 

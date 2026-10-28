@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { UserFacingError } from '../errors.js';
-import { chunkText, toParagraphs } from '../text.js';
+import { UserFacingError } from '../../shared/errors.js';
+import { chunkText, toParagraphs } from '../../shared/text.js';
 
 export const DEFAULT_MODEL = 'claude-opus-5-5';
 

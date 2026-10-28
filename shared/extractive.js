@@ -1,4 +1,4 @@
-import { UserFacingError } from '../errors.js';
+import { UserFacingError } from './errors.js';
 
 // Common English function words. Words that are frequent in *this* document are also
 // dropped (see GENERIC_SENTENCE_SHARE), which keeps the approach usable for other languages.
@@ -125,17 +125,4 @@ export function summarizeExtractive(text) {
     if (chosen.length > 0) paragraphs.push(chosen.map((i) => sentences[i]).join(' '));
   }
   return paragraphs;
-}
-
-/**
- * @returns {import('./index.js').Summarizer}
- */
-export function createExtractiveSummarizer() {
-  return {
-    mode: 'extractive',
-    model: null,
-    async summarize({ text }) {
-      return { paragraphs: summarizeExtractive(text) };
-    },
-  };
 }

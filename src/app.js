@@ -1,15 +1,15 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
-import multer from 'multer';
-import { UserFacingError } from './errors.js';
-import { extractPdf } from './extract.js';
+import { UserFacingError } from '../shared/errors.js';
 
 export const MAX_FILE_BYTES = 10 * 1024 * 1024;
+// A 10 MB PDF yields at most a few MB of text; this leaves generous headroom.
+export const MAX_TEXT_CHARS = 8_000_000;
 
-const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
+const defaultSiteDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist');
 
-// Everything is served from our own origin; there are no inline scripts or styles.
+// Keep in sync with the [[headers]] block in netlify.toml.
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
   "img-src 'self' data:",
@@ -19,35 +19,18 @@ const CONTENT_SECURITY_POLICY = [
   "frame-ancestors 'none'",
 ].join('; ');
 
-/** PDFs start with "%PDF-" (readers tolerate up to 1 KB of leading junk). */
-function looksLikePdf(buffer) {
-  return buffer.subarray(0, 1024).includes('%PDF-');
-}
-
 /**
- * Browsers send file names as UTF-8 but multer decodes them as Latin-1.
- * Re-decode when that round-trips cleanly (i.e. the name was really UTF-8).
- */
-function fixFileName(name) {
-  const decoded = Buffer.from(name, 'latin1').toString('utf8');
-  return decoded.includes('�') ? name : decoded;
-}
-
-/**
+ * The browser reads the PDF and makes the quick extractive summary itself. This server
+ * only adds AI summaries: the browser sends the extracted text, never the PDF.
+ *
  * @param {object} options
- * @param {import('./summarizers/index.js').Summarizer} options.summarizer
- * @param {number} [options.maxFileBytes]
+ * @param {import('./summarizers/index.js').Summarizer | null} options.summarizer
+ * @param {string} [options.siteDir] Built site to serve (see `npm run build`).
  * @returns {import('express').Express}
  */
-export function createApp({ summarizer, maxFileBytes = MAX_FILE_BYTES }) {
+export function createApp({ summarizer, siteDir = defaultSiteDir }) {
   const app = express();
   app.disable('x-powered-by');
-
-  // Uploads are held in memory only and never written to disk.
-  const upload = multer({
-    storage: multer.memoryStorage(),
-    limits: { fileSize: maxFileBytes, files: 1, fields: 0 },
-  });
 
   app.use((req, res, next) => {
     res.set({
@@ -59,19 +42,22 @@ export function createApp({ summarizer, maxFileBytes = MAX_FILE_BYTES }) {
   });
 
   app.get('/api/config', (req, res) => {
-    res.json({
-      maxFileBytes,
-      mode: summarizer.mode,
-    });
+    res.json({ maxFileBytes: MAX_FILE_BYTES, mode: summarizer ? 'ai' : 'browser' });
   });
 
-  app.post('/api/summarize', upload.single('file'), async (req, res) => {
-    const file = req.file;
-    if (!file) {
-      throw new UserFacingError(400, 'Please choose a PDF file to upload.');
+  app.post('/api/summarize-text', express.json({ limit: '20mb' }), async (req, res) => {
+    if (!summarizer) {
+      throw new UserFacingError(404, 'AI summaries are not enabled on this server.');
     }
-    if (!looksLikePdf(file.buffer)) {
-      throw new UserFacingError(415, 'That file does not look like a PDF. Please upload a .pdf file.');
+    const { title, text } = req.body ?? {};
+    if (typeof title !== 'string' || !title.trim() || title.length > 300) {
+      throw new UserFacingError(400, 'A book title is required.');
+    }
+    if (typeof text !== 'string' || !text.trim()) {
+      throw new UserFacingError(400, 'No book text was sent.');
+    }
+    if (text.length > MAX_TEXT_CHARS) {
+      throw new UserFacingError(413, 'This book has too much text to summarize.');
     }
 
     // Stop paying for a summary nobody is waiting for.
@@ -81,20 +67,8 @@ export function createApp({ summarizer, maxFileBytes = MAX_FILE_BYTES }) {
     });
 
     try {
-      const book = await extractPdf(file.buffer, fixFileName(file.originalname));
-      const { paragraphs } = await summarizer.summarize({
-        title: book.title,
-        text: book.text,
-        signal: controller.signal,
-      });
-
-      res.json({
-        title: book.title,
-        pages: book.pages,
-        words: book.words,
-        mode: summarizer.mode,
-        paragraphs,
-      });
+      const { paragraphs } = await summarizer.summarize({ title: title.trim(), text, signal: controller.signal });
+      res.json({ mode: 'ai', paragraphs });
     } catch (err) {
       // Whatever failed, nobody is listening any more: don't log or reply.
       if (controller.signal.aborted) return;
@@ -106,18 +80,16 @@ export function createApp({ summarizer, maxFileBytes = MAX_FILE_BYTES }) {
     res.status(404).json({ error: 'Not found.' });
   });
 
-  app.use(express.static(publicDir, { extensions: ['html'] }));
+  app.use(express.static(siteDir, { extensions: ['html'] }));
 
   // eslint-disable-next-line no-unused-vars -- Express identifies error handlers by arity.
   app.use((err, req, res, next) => {
     if (res.headersSent) return;
-
-    if (err instanceof multer.MulterError) {
-      if (err.code === 'LIMIT_FILE_SIZE') {
-        const mb = Math.round(maxFileBytes / (1024 * 1024));
-        return res.status(413).json({ error: `That file is larger than the ${mb} MB limit.` });
-      }
-      return res.status(400).json({ error: 'The upload was not understood. Please choose one PDF file.' });
+    if (err?.type === 'entity.too.large') {
+      return res.status(413).json({ error: 'This book has too much text to summarize.' });
+    }
+    if (err?.type === 'entity.parse.failed') {
+      return res.status(400).json({ error: 'The request was not understood.' });
     }
     if (err instanceof UserFacingError) {
       if (err.cause) console.error(`[${err.status}] ${err.message}`, err.cause);

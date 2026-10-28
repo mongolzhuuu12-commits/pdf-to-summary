@@ -1,0 +1,22 @@
+# Static deploy: the browser reads PDFs and writes the quick summary, so no functions
+# are needed. (AI summaries need the Node server in server.js; see the README.)
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+# Keep in sync with CONTENT_SECURITY_POLICY in src/app.js.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Content-Security-Policy = "default-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "no-referrer"
+
+# pdf.js only changes when the dependency is upgraded, so a week of browser caching is safe.
+[[headers]]
+  for = "/vendor/*"
+  [headers.values]
+    Cache-Control = "public, max-age=604800"

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import Anthropic from '@anthropic-ai/sdk';
-import { UserFacingError } from '../src/errors.js';
+import { UserFacingError } from '../shared/errors.js';
 import { createClaudeSummarizer, DEFAULT_MODEL } from '../src/summarizers/claude.js';
 import { createSummarizerFromEnv } from '../src/summarizers/index.js';
 
@@ -250,8 +250,8 @@ describe('failures', () => {
 });
 
 describe('createSummarizerFromEnv', () => {
-  it('uses the extractive summarizer when no credential is configured', () => {
-    assert.equal(createSummarizerFromEnv({}).mode, 'extractive');
+  it('offers no server-side summarizer when no credential is configured', () => {
+    assert.equal(createSummarizerFromEnv({}), null);
   });
 
   it('uses Claude when an API key is present, with the default model', () => {
@@ -264,8 +264,8 @@ describe('createSummarizerFromEnv', () => {
     assert.equal(createSummarizerFromEnv({ ANTHROPIC_API_KEY: 'k', SUMMARY_MODEL: 'claude-sonnet-5-5' }).model, 'claude-sonnet-5-5');
   });
 
-  it('can force the extractive summarizer even with a key', () => {
-    assert.equal(createSummarizerFromEnv({ ANTHROPIC_API_KEY: 'k', SUMMARIZER: 'extractive' }).mode, 'extractive');
+  it('can turn AI off even with a key', () => {
+    assert.equal(createSummarizerFromEnv({ ANTHROPIC_API_KEY: 'k', SUMMARIZER: 'extractive' }), null);
   });
 
   it('refuses SUMMARIZER=ai without a credential', () => {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { UserFacingError } from '../src/errors.js';
-import { splitSentences, summarizeExtractive } from '../src/summarizers/extractive.js';
+import { UserFacingError } from '../shared/errors.js';
+import { splitSentences, summarizeExtractive } from '../shared/extractive.js';
 import { makeBook, makeSentences } from './helpers/sample-text.js';
 
 describe('splitSentences', () => {
